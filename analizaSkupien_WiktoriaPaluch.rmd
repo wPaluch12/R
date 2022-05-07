@@ -1,0 +1,426 @@
+---
+title: "Analiza Skupien"
+author: "Wiktoria Paluch"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+piwo<-read.csv("C:\\Users\\wikip\\OneDrive\\Pulpit\\rok3\\SAD\\piwo.csv", row.names = 1, sep = ";")
+library(knitr)
+library(outliers)
+library(sjstats)
+library(psych)
+library(dplyr)
+library(clusterSim)
+library(pheatmap)
+library(factoextra)
+library(knitr)
+library(moments)
+```
+
+## Wstęp
+
+<p> Praca skupia się na analizie zbioru danych - piwo.csv, w którym zebrano informacje odnośnie 20 popularnych marek piw. Celem projektu jest pogrupowanie marek pod względem podobieństwa analizowanych cech. Badania odpowiedzą na pytanie, które piwa można uznać za najbardziej nietypowe, a które można zaklasyfikować jako przeciętne.</p>
+
+## Opis zbioru danych
+
+Zbiór danych zawiera następujące zmienne: <ul>
+    <li> zawartość alkoholu - procentowa zawartość alkoholu w butelce piwa [%], 
+    <li> cena - cena jednostkowa za butelkę piwa [zł],
+    <li> dostępność - dostępność w wybranych krakowskich sklepach spożywczych[pkt], 
+    <li> znajomość - rozpoznawalność marki wśród ankietowanych[pkt], 
+    <li> preferencje - preferencje ankietowanych do danej marki piwa[pkt].
+</ul>
+```{r summary, echo=FALSE ,results='asis'}
+library(knitr)
+kable(piwo, caption = "Zbiór danych")
+```
+
+# Statystyki opisowe
+
+```{r, include=FALSE}
+k<-matrix(,5,6)
+colnames(k)<-c("min","1st.Qu","me", "mean","3rd.Qu","max")
+row.names(k)<- c("zaw.alk","cena","dost.","znaj","pref")
+for (i in 1:5) {
+  k[i,]<- summary(piwo[,i])
+}
+```
+
+```{r opisowe , echo=FALSE , results='asis'}
+library(knitr)
+kable(k, caption = "podstawewe statystyki")
+kable(skewness(piwo), caption = "skośność")
+kable(kurtosis(piwo), caption = "kurtoza")
+
+```
+
+
+<ul>
+<li>Minimalna zawartość alkoholu badanych piw to 4.5%, natomiast największa to 7.1%, Mediana wynosi 6%, współczynnik asymetrii bliski 0, zatem rozkład jest symetryczny
+<li>minimalna cena to 1.99 zł a maksymalna badanych piw to 4.15 zł, mediana równa 2.61zł, asymetria prawostronna
+<li>Najmniej dostępne piwo uzyskało wskaźnik równy 0.1pkt a największa wartość  to 1.9pkt, asymetria lewostronna
+<li>Znajomość na poziomie pomiędzy 0.84 - 1.95, zatem brane są pod uwagę dość rozpoznawalne marki piwa, lewostronna asymetria, dane skumulowane wokół średniej równej 1.68 pkt
+<li> Duża dysproporcja pomiędzy preferencjami piwa, wartość minimalna wskaźnika to 0.34 a maksymalna to 2.65, asymetria prawostronna 
+</ul>
+
+
+
+```{r, include=FALSE}
+wz <- function(kolumna) {
+  wsp_zm <- sd(kolumna)/mean(kolumna)
+  return(wsp_zm)
+}
+wspl_zmiennosci<-round(apply(piwo,2,wz),3)
+
+```
+
+```{r wspzmien , echo=FALSE , results='asis'}
+kable(wspl_zmiennosci, caption = "Wspolczynnik zmiennosci")
+
+```
+Dla każdej zmiennej współczynnik zmienności jest większy niż 10%, zatem nie ma podstaw, aby nie uwzględnić którejś ze zmiennych w tym kroku.
+
+```{r korelacja , echo=FALSE , results='asis'}
+kable(round(cor(piwo),3))
+
+```
+Zmienne dostępność i znajomość są dość silnie ze sobą skorelowane, jednak ich korelacja jest mniejsza niż 0.9, zatem usuniecie jednej z nich nie jest konieczne.
+
+## Usuwanie wartości odstających
+Metody użyte w projekcie są wrażliwe na występowanie wartości odstających, zatem należy je usunąć. 
+Do badania czy najmniejsza/największa wartość zmiennej jest wartością odstająca można użyć testu Grubba. Pokazuje on czy przy przyjętym poziomie istotności ( w projekcie przyjęto poz. ust  na poziomie 95%) występują obserwacje nietypowe.
+Hipotezy: <br>
+$H_0 $: w ciągu obserwacji $x_1 ,x_2,...,x_n$ nie istnieją obserwacje nietypowe (o zbyt dużych lub zbyt małych wartościach). 
+$H_1 $:  minimalna/maksymalna wartość realizacji $x_1 ,x_2,...,x_n$  próby losowej jest wartością nietypową.
+```{r, include=FALSE}
+k<-matrix(,5,2)
+colnames(k)<-c("p-value","alternative")
+row.names(k)<- c("zaw.alk","cena","dost.","znaj","pref")
+for (i in 1:5) {
+  l<-grubbs.test(piwo[,i], type = 10, opposite = FALSE, two.sided = FALSE)
+  k[i,1]<-round(l$p.value,4)
+  k[i,2]<-l$alternative
+}
+```
+
+```{r outlier , echo=FALSE , results='asis'}
+kable(k)
+
+```
+
+Hipotezę H0 odrzuca się gdy p-value jest mniejsze niż 5%. Test wskazał że dla zmiennej "dostępność" i "znajomość" najniższa wartość jest outlierem, obie te wartości należą do marki piwa "Specjał", zatem usuniecie jej powinno rozwiązać problem outlierow.
+
+```{r, include=FALSE}
+
+piwo<-piwo[-11,]
+```
+
+## Standaryzacja danych
+Aby zbadać wpływ standaryzacji danych na podział grup przeprowadzono standaryzacje następującymi metodami:
+<ul>
+<li> standaryzacja za pomocą funkcji "scale", która centruje, a następnie skaluje wartości zmiennych  </li>
+<li> n1 - standaryzacja według odchyleń standardowych ((x-mean)/sd) </li>
+<li> n3 - unitaryzacja ((x-mean)/range) </li>
+<li> n12 - normalizacja  ((x-mean)/sqrt(sum((x-mean)^2))) </li>
+</ul>
+
+
+```{r, include=FALSE}
+piwo_st = data.frame(scale(piwo))
+piwo_norm<-data.Normalization(piwo,type="n1",normalization="column")
+piwo_norm1<-data.Normalization(piwo,type="n3",normalization="column")
+piwo_norm2<-data.Normalization(piwo,type="n12",normalization="column")
+```
+
+```{r, echo=FALSE}
+pheatmap(piwo_norm, scale = "none",main = "Dane standaryzowane n1", cutree_rows = 5)
+pheatmap(piwo_st, scale = "none",main = "Dane standaryzowane scale", cutree_rows = 5)
+pheatmap(piwo_norm1, scale = "none",main = "Dane standaryzowane n3", cutree_rows = 5)
+pheatmap(piwo_norm2, scale = "none",main = "Dane znormalizowane n12", cutree_rows = 5)
+```
+<p>Z map można odczytać zależności według badanych cech, które trudniej dostrzec w tabelach. Najmocniejsze piwa to Okocim mocne, Tatra mocne i Debowe mocne, pod względem preferencji dominuje Żywiec, najdroższe piwa to Desperados, Somersby i Redds. Najmniej dostępne piwo to Wojak, a najmniej znane to Tatra Pils. Badając dane cechy i ich nasilenie można wstępnie dokonać podziału zważając na podobieństwa w nasileniu zmiennych.</p>
+
+<p>Można zauważyć, ze dla standaryzacji n1, scale i normalizacji n12 mapy maja ten sam układ, różnią się jedynie skala. Natomiast dla unitaryzacji mapa rożni się od pozostałych podziałem marek piw. Zatem dobór metody normalizacji ma istotny wpływ na podobieństwo i różnice miedzy obserwacjami.</p>
+
+<p>Do dalszej analizy wykorzystano standaryzacje n1.</p>
+
+
+### Sprawdzenie outlierow po standaryzacji
+Przeprowadzono po raz kolejny badanie wartości odstających, ze względu wrażliwości metod użytych w dalszej części na ich występowanie. Wykorzystano tym razem regule "trzech sigm".
+<i>Reguła Trzech Sigm dla danego rozkładu normalnego N(μ,σ) oznacza, że obserwacje, które nie należą do przedziału [μ–3σ,μ+3σ] będą się zdarzały bardzo rzadko. Są to obserwacje odstające, które należy usunąć lub zmodyfikować.</i>
+Zatem wartosci po standaryzacji bedace na modul wieksze niż 3, beda outlierami.
+```{r , echo=FALSE, results='asis'}
+kable(round(piwo_norm,3))
+
+```
+Brak wartości odstających, żadna wartość nie jest na moduł większa niż 3.
+
+# Macierz odległości
+W grupowaniu hierarchicznym bardzo ważnym elementem jest utworzenie macierzy odległości. W badaniu wybrano trzy procedury tworzenia macierzy odległości:
+<ul>
+<li> odległość euklidesowa </li>
+<li> odległość Manhattan </li>
+<li> odległość Minkowski </li>
+</ul>
+
+
+### Odległość Euklidesowa
+
+
+```{r, include=FALSE}
+odleglosc_norm<-dist(piwo_norm, method = "euclidian")
+odleglosc_norm1<-dist(piwo_norm, method = "manhattan")
+odleglosc_norm2<-dist(piwo_norm, method = "minkowski")
+```
+
+
+```{r, echo=FALSE}
+fviz_dist(odleglosc_norm)
+```
+<p><b>Czerwony</b>: duże podobieństwo | <b> Niebieski</b>: małe podobieństwo </p>
+
+
+
+```{r, echo=FALSE}
+hc = hclust(odleglosc_norm, method = "ward.D2")
+plot( hc, hang= -1, main="Odleglosc Euklidesowa")
+rect.hclust(  hc , h = 4 , border = "blue")
+```
+
+
+### Odleglosc Manhattan 
+```{r, echo=FALSE}
+fviz_dist(odleglosc_norm1)
+```
+<p><b>Czerwony</b>: duże podobieństwo | <b> Niebieski</b>: małe podobieństwo </p>
+
+```{r, echo=FALSE}
+hc = hclust(odleglosc_norm1, method = "ward.D2")
+plot( hc, hang= -1, main="Odleglosc Manhattan")
+rect.hclust(  hc , h = 7 , border = "blue")
+```
+
+### Odleglosc Minkowski 
+```{r, echo=FALSE}
+fviz_dist(odleglosc_norm2)
+```
+<p><b>Czerwony</b>: duże podobieństwo | <b> Niebieski</b>: małe podobieństwo </p>
+
+
+
+```{r, echo=FALSE}
+hc = hclust(odleglosc_norm2, method = "ward.D2")
+plot( hc, hang= -1, main="Odleglosc Minkowski")
+rect.hclust(  hc , h = 4 , border = "blue")
+```
+
+### Wnioski
+
+Dendrogramy są podobne, w każdym zaklasyfikowano Redds i Somersby jako osobna klasę, Żywiec i Kasztelan w każdym z nich są w tej samej klasie, również Okocim_mocne, Harnas, Łomża, Żubr są zaklasyfikowane w jednej klasie, następna klasę tworzą Wojak, Tatra_Pils, Tatra_mocne i Debowe_mocne, a Carslberg,Desperados, Heineken i Lech to osobna klasa. Różnice w klasyfikacji pojawiają się przy takich markach jak: Perla i Tyskie. 
+Dla odległości Euklidesowej i Minkowski dendrogramy są bardzo zbliżone do siebie, natomiast dla dendrogramu wyznaczonego odległością Manhattan można wskazać niewielkie różnice. 
+
+# Metoda k-means
+
+<i> Celem tej metody jest podział zbioru danych na k klastrów. Dobry podział to taki, w którym suma odległości obserwacji należących do klastra jest znacznie mniejsza od sumie odległości obserwacji pomiędzy klastrami. Metoda k-średnich polega na wyznaczeniu współrzędnych k punktów, które zostaną uznane za środki klastrów. Obserwacja będzie należała do tego klastra, którego środek jest najbliżej niej.</i>
+
+### Podział na 5 klas
+
+```{r, include=FALSE}
+srednie<-kmeans(piwo_norm, 5)
+table(srednie$cluster)
+typepiwo<- data.frame( Piwo=  substr(row.names(piwo),1,3), cluster= srednie$cluster)
+```
+
+
+```{r, echo=FALSE}
+t(table(typepiwo))
+
+```
+Tabela przedstawia podzial piw na klasy. 
+
+```{r, echo=FALSE}
+dists=dist(piwo_norm)
+mds=cmdscale(dists)
+
+plot(mds, pch=row.names(mds),col=rainbow(5)[srednie$cluster] )
+legend("bottomright",
+       legend=paste("clu",unique(srednie$cluster)),
+       fill=rainbow(5)[unique(srednie$cluster)],
+       border=NA,box.col=NA)
+```
+<p> Podział za pomocą metody kmeans jest zbliżony do podziałów z dendrogramów, widać charakterystyczne obserwacje razem w grupach tj. Żywiec i Kasztelan, Redds i Somersby. 
+Cluster pierwszy to piwa znane, o wysokim współczynniku preferencji, przeciętnej cenie i zawartości alkoholu. Drugi cluster to piwa z wyższej polki cenowej, o przeciętnej znajomości i współczynniku preferencji. Piaty cluster to piwa o dużej zawartości alkoholu i malej znajomości/dostępności. </p>
+
+# Metoda pam
+
+<i> Metoda PAM działa na podobnej zasadzie jak k-średnich, z tą różnicą, że środkami klastrów są obserwacje ze zbioru danych (nazywane centroidami lub centrami klastrów). W metodzie PAM zbiór możliwych środków klastrów jest więc znacznie mniejszy, niż w metodzie k-średnich, zazwyczaj też wyniki działania metody PAM są stabilniejsze. </i>
+
+### Podział na 5 klas
+
+```{r, include=FALSE}
+srednie<-pam(piwo_norm, 5)
+table(srednie$cluster)
+typepiwo<- data.frame( Piwo=  substr(row.names(piwo),1,3), cluster= srednie$cluster)
+```
+
+
+```{r, echo=FALSE}
+t(table(typepiwo))
+
+```
+Tabela przedstawia podział piw na klasy.
+
+```{r, echo=FALSE}
+dists=dist(piwo_norm)
+mds=cmdscale(dists)
+
+plot(mds, pch=row.names(mds),col=rainbow(5)[srednie$cluster] )
+legend("bottomright",
+       legend=paste("clu",unique(srednie$cluster)),
+       fill=rainbow(5)[unique(srednie$cluster)],
+       border=NA,box.col=NA)
+```
+
+<p> W tej metodzie piwo Wojak zostało zaklasyfikowane jako osobna klasa- patrząc na "mapy  ciepła" z pkt "standaryzacja zmiennych" jest to całkiem słuszne zaklasyfikowanie, gdyż odznacza się ono od pozostałych bardzo mała znajomością i dostępnością. charakterystyczne obserwacje razem w grupach tj. Żywiec i Kasztelan, Redds i Somersby.</p>
+
+
+
+# Ilość grup
+W metodach analizy skupień problem sprawia znalezienie na ile grup podzielić dane. Pomocne okazują się tu takie narzędzia jak np. indeks. S, który wyznacza średnią sylwetkę (silhouette).<br> 
+<b>Sylwetka (silhouette) </b>- $S(u)=1/n\sum_{i=1}^{n}(b(i)-a(i))/max(a(i),b(i))$ średnie podobieństwo obiektów do klastrów w których się znajdują, zatem im większa wartość tego wskaźnika tym obiekty w danych grupach są lepiej dopasowane.<br>
+
+### metoda kmeans
+
+```{r, include=FALSE}
+md <- odleglosc_norm
+# nc - number_of_clusters
+min_nc=2
+max_nc=10
+res <- array(0, c(max_nc-min_nc+1, 2))
+res[,1] <- min_nc:max_nc
+clusters <- NULL
+for (nc in min_nc:max_nc)
+{
+  cl2 <- kmeans(md, nc)
+  res[nc-min_nc+1, 2] <- S <- index.S(md,cl2$cluster)
+  clusters <- rbind(clusters, cl2$cluster)
+}
+print(paste("max S for",(min_nc:max_nc)[which.max(res[,2])],"clusters=",max(res[,2])))
+print("clustering for max S")
+print(clusters[which.max(res[,2]),])
+write.table(res,file="S_res.csv",sep=";",dec=",",row.names=TRUE,col.names=FALSE)
+
+
+```
+
+```{r, echo=FALSE}
+plot(res,type="p",pch=0,xlab="Number of clusters",ylab="S",xaxt="n")
+axis(1, c(min_nc:max_nc))
+
+```
+<p> </p>
+<p>Dla metody kmeans najlepszy będzie podział na 3-5 grup, gdyż podział na 2 grupy jest zbyt ogólny, wykres dla 5 będzie się on prezentował następująco:</p>
+
+
+```{r, include=FALSE}
+srednie<-kmeans(piwo_norm, 5)
+table(srednie$cluster)
+typepiwo<- data.frame( Piwo=  substr(row.names(piwo),1,3), cluster= srednie$cluster)
+```
+
+
+```{r, echo=FALSE}
+t(table(typepiwo))
+
+```
+<p>Tabela przedstawia podział piw na klasy. </p>
+
+```{r, echo=FALSE}
+dists=dist(piwo_norm)
+mds=cmdscale(dists)
+
+plot(mds, pch=row.names(mds),col=rainbow(5)[srednie$cluster] )
+legend("bottomright",
+       legend=paste("clu",unique(srednie$cluster)),
+       fill=rainbow(5)[unique(srednie$cluster)],
+       border=NA,box.col=NA)
+```
+
+
+
+
+
+
+
+
+
+### metoda pam
+
+```{r, include=FALSE}
+md <- odleglosc_norm
+# nc - number_of_clusters
+min_nc=2
+max_nc=10
+res <- array(0, c(max_nc-min_nc+1, 2))
+res[,1] <- min_nc:max_nc
+clusters <- NULL
+for (nc in min_nc:max_nc)
+{
+  cl2 <- pam(md, nc)
+  res[nc-min_nc+1, 2] <- S <- index.S(md,cl2$cluster)
+  clusters <- rbind(clusters, cl2$cluster)
+}
+print(paste("max S for",(min_nc:max_nc)[which.max(res[,2])],"clusters=",max(res[,2])))
+print("clustering for max S")
+print(clusters[which.max(res[,2]),])
+write.table(res,file="S_res.csv",sep=";",dec=",",row.names=TRUE,col.names=FALSE)
+
+
+```
+
+```{r, echo=FALSE}
+plot(res,type="p",pch=0,xlab="Number of clusters",ylab="S",xaxt="n")
+axis(1, c(min_nc:max_nc))
+
+```
+<p>Dla metody pam najlepszy będzie podział na 3 grupy, a wiec będzie się on prezentował następująco:</p>
+
+```{r, include=FALSE}
+srednie<-pam(piwo_norm, 3)
+table(srednie$cluster)
+typepiwo<- data.frame( Piwo=  substr(row.names(piwo),1,3), cluster= srednie$cluster)
+```
+
+
+```{r, echo=FALSE}
+t(table(typepiwo))
+
+```
+<p>Tabela przedstawia podział piw na klasy. </p>
+
+```{r, echo=FALSE}
+dists=dist(piwo_norm)
+mds=cmdscale(dists)
+
+plot(mds, pch=row.names(mds),col=rainbow(3)[srednie$cluster] )
+legend("bottomright",
+       legend=paste("clu",unique(srednie$cluster)),
+       fill=rainbow(3)[unique(srednie$cluster)],
+       border=NA,box.col=NA)
+```
+
+
+# Wnioski z badań
+
+Wszystkie metody podziału obiektów wskazały podobne wyniki, widać zależności ze jeżeli dane piwo np. Żywiec i Kasztelan charakteryzują się dużym współczynnikiem preferencji to zawsze znajdowały się razem w danej grupie. Na różnice pomiędzy danymi pogrupowaniami istotny wpływ ma nie tylko metoda grupowań ale również i sposób standaryzacji zmiennych oraz sposób obliczania miary odległości.
+
+### Bibliografia
+https://pbiecek.github.io/NaPrzelajDataMiningR/part-3.html#part_31<br>
+http://keii.ue.wroc.pl/clusterSim/clusterSim.pdf<br>
+https://compgenomr.github.io/book/clustering-grouping-samples-based-on-their-similarity.html<br>
+WYBRANE TESTY STATYSTYCZNE DLA WARTOŚCI NIETYPOWYCH I ICH ZASTOSOWANIE W ANALIZACH EKONOMETRYCZNYCH,Dorota Pekasiewicz<br>
+www.rdocumentation.org<br>
+
+
