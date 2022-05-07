@@ -4,7 +4,7 @@ author: "Wiktoria Paluch"
 output: html_document
 ---
 
-## Wstęp
+## Opis
 
 <p> Praca skupia się na analizie zbioru danych - piwo.csv, w którym zebrano informacje odnośnie 20 popularnych marek piw. Celem projektu jest pogrupowanie marek pod względem podobieństwa analizowanych cech. Badania odpowiedzą na pytanie, które piwa można uznać za najbardziej nietypowe, a które można zaklasyfikować jako przeciętne.</p>
 
